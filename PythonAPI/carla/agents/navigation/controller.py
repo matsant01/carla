@@ -48,7 +48,7 @@ class VehiclePIDController():
         self._vehicle = vehicle
         self._world = self._vehicle.get_world()
         self.past_steering = self._vehicle.get_control().steer
-        self._lon_controller = PIDLongitudinalController(self._vehicle, **args_longitudinal)
+        self._lon_controller = PIDLongitudinalController(self._vehicle, **args_longitudinal, max_throttle=self.max_throt, max_brake=self.max_brake)
         self._lat_controller = PIDLateralController(self._vehicle, offset, **args_lateral)
 
     def run_step(self, target_speed, waypoint):
@@ -106,7 +106,7 @@ class PIDLongitudinalController():
     PIDLongitudinalController implements longitudinal control using a PID.
     """
 
-    def __init__(self, vehicle, K_P=1.0, K_I=0.0, K_D=0.0, dt=0.03):
+    def __init__(self, vehicle, K_P=1.0, K_I=0.0, K_D=0.0, dt=0.03, max_throttle=0.75, max_brake=0.3):
         """
         Constructor method.
 
@@ -115,13 +115,20 @@ class PIDLongitudinalController():
             :param K_D: Differential term
             :param K_I: Integral term
             :param dt: time differential in seconds
+            :param max_throttle: maximum throttle value
+            :param max_brake: maximum brake value
         """
         self._vehicle = vehicle
         self._k_p = K_P
         self._k_i = K_I
         self._k_d = K_D
         self._dt = dt
-        self._error_buffer = deque(maxlen=10)
+        self._y_p = 0
+        self._y_i = 0
+        self._y_d = 0
+        self._error_buffer = deque(maxlen=2)
+        self._max_throttle = max_throttle
+        self._max_brake = max_brake
 
     def run_step(self, target_speed, debug=False):
         """
@@ -140,7 +147,8 @@ class PIDLongitudinalController():
 
     def _pid_control(self, target_speed, current_speed):
         """
-        Estimate the throttle/brake of the vehicle based on the PID equations
+        Estimate the throttle/brake of the vehicle based on the PID equations with
+        anti-windup considering both braking and throttle limits.
 
             :param target_speed:  target speed in Km/h
             :param current_speed: current speed of the vehicle in Km/h
@@ -149,22 +157,38 @@ class PIDLongitudinalController():
 
         error = target_speed - current_speed
         self._error_buffer.append(error)
-
-        if len(self._error_buffer) >= 2:
-            _de = (self._error_buffer[-1] - self._error_buffer[-2]) / self._dt
-            _ie = sum(self._error_buffer) * self._dt
+        
+        if len(self._error_buffer) < 2:
+            self._y_i = 0
+            self._y_d = 0
         else:
-            _de = 0.0
-            _ie = 0.0
+            incr_i = self._k_i * (self._error_buffer[0] + self._error_buffer[-1]) * self._dt / 2
+            self._y_d = self._k_d * (self._error_buffer[-1] - self._error_buffer[-2]) / self._dt        
+            
+            # Anti-windup
+            if self._y_i >= self._max_throttle and incr_i > 0:
+                self._y_i == self._max_throttle
+            elif self._y_i <= - self._max_brake and incr_i < 0:
+                self._y_i == - self._max_brake
+            else:
+                self._y_i += incr_i
+            
+        self._y_p = self._k_p * self._error_buffer[-1]
+        
+        # Clamp output to max throttle/brake consistently with the anti-windup logic
+        return np.clip(self._y_p + self._y_i + self._y_d,
+                       -self._max_brake,
+                       self._max_throttle)
 
-        return np.clip((self._k_p * error) + (self._k_d * _de) + (self._k_i * _ie), -1.0, 1.0)
 
-    def change_parameters(self, K_P, K_I, K_D, dt):
+    def change_parameters(self, K_P, K_I, K_D, dt, max_throttle, max_brake):
         """Changes the PID parameters"""
         self._k_p = K_P
         self._k_i = K_I
         self._k_d = K_D
         self._dt = dt
+        self._max_throttle = max_throttle
+        self._max_brake = max_brake
 
 
 class PIDLateralController():
