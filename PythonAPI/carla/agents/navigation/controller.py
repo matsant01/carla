@@ -106,7 +106,7 @@ class PIDLongitudinalController():
     PIDLongitudinalController implements longitudinal control using a PID.
     """
 
-    def __init__(self, vehicle, K_P=1.0, K_I=0.0, K_D=0.0, dt=0.03, max_throttle=0.75, max_brake=0.3):
+    def __init__(self, vehicle, K_P=1.0, K_I=0.0, K_D=0.0, dt=0.03, anti_windup=False, max_throttle=0.75, max_brake=0.3):
         """
         Constructor method.
 
@@ -122,6 +122,7 @@ class PIDLongitudinalController():
         self._k_p = K_P
         self._k_i = K_I
         self._k_d = K_D
+        self._anti_windup = anti_windup
         self._dt = dt
         self._y_p = 0
         self._y_i = 0
@@ -149,6 +150,7 @@ class PIDLongitudinalController():
         """
         Estimate the throttle/brake of the vehicle based on the PID equations.
         Integral term is computed using Trapezoidal Rule.
+        
             :param target_speed:  target speed in Km/h
             :param current_speed: current speed of the vehicle in Km/h
             :return: throttle/brake control
@@ -161,12 +163,23 @@ class PIDLongitudinalController():
             self._y_i = 0
             self._y_d = 0
         else:
-            self._y_d = self._k_d * (self._error_buffer[-1] - self._error_buffer[-2]) / self._dt                 
-            # handle possible overflow of the integral term
-            try:
-                self._y_i += self._k_i * (self._error_buffer[0] + self._error_buffer[-1]) * self._dt / 2
-            except OverflowError:
-                raise RuntimeError('Integral term overflow')
+            incr_i = self._k_i * (self._error_buffer[0] + self._error_buffer[-1]) * self._dt / 2
+            self._y_d = self._k_d * (self._error_buffer[-1] - self._error_buffer[-2]) / self._dt
+            
+            if self._anti_windup:
+                # Compute integral term with anti wind-up clamping
+                if self._y_i >= self._max_throttle and incr_i > 0:
+                    self._y_i == self._max_throttle
+                elif self._y_i <= - self._max_brake and incr_i < 0:
+                    self._y_i == - self._max_brake
+                else:
+                    self._y_i += incr_i
+            else:                        
+                # Compute integral term without clamping, but checking for overflow
+                try:
+                    self._y_i += incr_i
+                except OverflowError:
+                    raise RuntimeError('Integral term overflow')
             
         self._y_p = self._k_p * self._error_buffer[-1]
         
