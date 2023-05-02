@@ -12,6 +12,7 @@ Plugins
 /Import/*
 !/Import/README.md
 
+.gitignore
 *.VC.db
 *.VC.opendb
 *.a
@@ -47,3 +48,16 @@ _out*
 _site
 core
 profiler.csv
+PythonAPI/capiamoci_custom_carla/*
+PythonAPI/filtered_signal_comparison/original_FTPfollowing_KP=0.1_KI=0.01_KD=0.01_dt=0.005.csv
+PythonAPI/filtered_signal_comparison/original_FTPfollowing_KP=0.1_KI=0.01_KD=0.01_dt=0.05.csv
+PythonAPI/filtered_signal_comparison/original_FTPfollowing_KP=1_KI=0.05_KD=0_dt=0.005.csv
+PythonAPI/filtered_signal_comparison/original_FTPfollowing_KP=1_KI=0.05_KD=0.01_dt=0.005.csv
+PythonAPI/filtered_signal_comparison/subsampled_FTPfollowing_KP=0.1_KI=0.01_KD=0.01_dt=0.005.csv
+PythonAPI/filtered_signal_comparison/subsampled_FTPfollowing_KP=0.1_KI=0.01_KD=0.01_dt=0.05.csv
+PythonAPI/filtered_signal_comparison/subsampled_FTPfollowing_KP=1_KI=0.05_KD=0_dt=0.005.csv
+PythonAPI/filtered_signal_comparison/subsampled_FTPfollowing_KP=1_KI=0.05_KD=0.01_dt=0.005.csv
+PythonAPI/slow_agent/original_FTPfollowing_KP=0.1_KI=0.01_KD=0.01_dt=0.005.csv
+PythonAPI/slow_agent/original_FTPfollowing_KP=0.08_KI=0.01_KD=0.01_dt=0.005.csv
+
+PythonAPI/ADSGenerator/test.ipynb
