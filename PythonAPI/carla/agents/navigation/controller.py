@@ -147,9 +147,8 @@ class PIDLongitudinalController():
 
     def _pid_control(self, target_speed, current_speed):
         """
-        Estimate the throttle/brake of the vehicle based on the PID equations with
-        anti-windup considering both braking and throttle limits.
-
+        Estimate the throttle/brake of the vehicle based on the PID equations.
+        Integral term is computed using Trapezoidal Rule.
             :param target_speed:  target speed in Km/h
             :param current_speed: current speed of the vehicle in Km/h
             :return: throttle/brake control
@@ -162,20 +161,16 @@ class PIDLongitudinalController():
             self._y_i = 0
             self._y_d = 0
         else:
-            incr_i = self._k_i * (self._error_buffer[0] + self._error_buffer[-1]) * self._dt / 2
-            self._y_d = self._k_d * (self._error_buffer[-1] - self._error_buffer[-2]) / self._dt        
-            
-            # Anti-windup
-            if self._y_i >= self._max_throttle and incr_i > 0:
-                self._y_i == self._max_throttle
-            elif self._y_i <= - self._max_brake and incr_i < 0:
-                self._y_i == - self._max_brake
-            else:
-                self._y_i += incr_i
+            self._y_d = self._k_d * (self._error_buffer[-1] - self._error_buffer[-2]) / self._dt                 
+            # handle possible overflow of the integral term
+            try:
+                self._y_i += self._k_i * (self._error_buffer[0] + self._error_buffer[-1]) * self._dt / 2
+            except OverflowError:
+                raise RuntimeError('Integral term overflow')
             
         self._y_p = self._k_p * self._error_buffer[-1]
         
-        # Clamp output to max throttle/brake consistently with the anti-windup logic
+        # Clamp output to max throttle/brake
         return np.clip(self._y_p + self._y_i + self._y_d,
                        -self._max_brake,
                        self._max_throttle)
