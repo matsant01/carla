@@ -31,11 +31,15 @@ class VehiclePIDController():
             K_P -- Proportional term
             K_D -- Differential term
             K_I -- Integral term
+            dt  -- delta time
         :param args_longitudinal: dictionary of arguments to set the longitudinal
         PID controller using the following semantics:
             K_P -- Proportional term
             K_D -- Differential term
             K_I -- Integral term
+            dt  -- Delta time
+            anti_windup -- Enable anti-windup
+            obs_delay   -- Delay in observation in seconds
         :param offset: If different than zero, the vehicle will drive displaced from the center line.
         Positive values imply a right offset while negative ones mean a left one. Numbers high enough
         to cause the vehicle to drive through other lanes might break the controller.
@@ -44,7 +48,6 @@ class VehiclePIDController():
         self.max_brake = max_brake
         self.max_throt = max_throttle
         self.max_steer = max_steering
-
         self._vehicle = vehicle
         self._world = self._vehicle.get_world()
         self.past_steering = self._vehicle.get_control().steer
@@ -106,7 +109,7 @@ class PIDLongitudinalController():
     PIDLongitudinalController implements longitudinal control using a PID.
     """
 
-    def __init__(self, vehicle, K_P=1.0, K_I=0.0, K_D=0.0, dt=0.03, anti_windup=False, max_throttle=0.75, max_brake=0.3):
+    def __init__(self, vehicle, K_P=1.0, K_I=0.0, K_D=0.0, dt=0.03, anti_windup=False, obs_delay=0, max_throttle=0.75, max_brake=0.3):
         """
         Constructor method.
 
@@ -115,6 +118,8 @@ class PIDLongitudinalController():
             :param K_D: Differential term
             :param K_I: Integral term
             :param dt: time differential in seconds
+            :param anti_windup: enable anti-windup logic
+            :param obs_delay: delay in observation in seconds 
             :param max_throttle: maximum throttle value
             :param max_brake: maximum brake value
         """
@@ -127,9 +132,10 @@ class PIDLongitudinalController():
         self._y_p = 0
         self._y_i = 0
         self._y_d = 0
-        self._error_buffer = deque(maxlen=2)
         self._max_throttle = max_throttle
         self._max_brake = max_brake
+        self._delay_steps = 2 if obs_delay <= 0 else int(obs_delay / dt)
+        self._error_buffer = deque(maxlen=self._delay_steps)
 
     def run_step(self, target_speed, debug=False):
         """
@@ -159,13 +165,18 @@ class PIDLongitudinalController():
         error = target_speed - current_speed
         self._error_buffer.append(error)
         
-        if len(self._error_buffer) < 2:
+
+        if len(self._error_buffer) < self._delay_steps:
+            # Buffer is not full yet
+            self._y_p = 0
             self._y_i = 0
             self._y_d = 0
         else:
-            incr_i = self._k_i * (self._error_buffer[0] + self._error_buffer[-1]) * self._dt / 2
-            self._y_d = self._k_d * (self._error_buffer[-1] - self._error_buffer[-2]) / self._dt
+            # Compute PID step with a delay of _delay_steps time units
+            self._y_p = self._k_p * self._error_buffer[1]
+            self._y_d = self._k_d * (self._error_buffer[1] - self._error_buffer[0]) / self._dt
             
+            incr_i = self._k_i * (self._error_buffer[0] + self._error_buffer[1]) * self._dt / 2
             if self._anti_windup:
                 # Compute integral term with anti wind-up clamping
                 if self._y_i >= self._max_throttle and incr_i > 0:
@@ -181,7 +192,6 @@ class PIDLongitudinalController():
                 except OverflowError:
                     raise RuntimeError('Integral term overflow')
             
-        self._y_p = self._k_p * self._error_buffer[-1]
         
         # Clamp output to max throttle/brake
         return np.clip(self._y_p + self._y_i + self._y_d,
