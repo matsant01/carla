@@ -126,6 +126,10 @@ class AggressiveDriver:
     
     def get_PID_parameters(self):
         return self._PID_parameters
+
+    def get_agent_options(self):
+        return self._opt_dict
+
     
     def set_plan(self, waypoints):
         if self._vehicle is None:

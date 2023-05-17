@@ -304,3 +304,19 @@ class ADSGenerator:
                 elif main_task.done():
                     print("Exiting save task!")
                     break
+                
+                
+    def get_agent_infos(self):
+        """Returns a dictionary containing the agent infos.
+        
+        --------------
+        ### Returns
+            `out` : dict
+                A dictionary containing the agent infos.
+        """
+        res = {}
+        res['target_aggIn'] = self._agg_driver.get_aggIn()
+        res.update(self._agg_driver.get_PID_parameters())
+        res.update(self._agg_driver.get_agent_options())
+        
+        return res
