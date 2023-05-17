@@ -76,8 +76,7 @@ class ADSGenerator:
         # Start and then stop the vehicle
         time_array = []
         target_velocity = 10
-        duration = 5
-
+        duration = 10
         self._agg_driver.set_agent_options({'follow_speed_limits' : False})            
         
         t0 = self._world.get_snapshot().timestamp.elapsed_seconds
@@ -94,6 +93,7 @@ class ADSGenerator:
             if time_array[-1] >= duration:
                 break   
         
+        self._agg_driver.reset()
         # Force the vehicle to brake for 3 seconds
         time_array = []
         t0 = self._world.get_snapshot().timestamp.elapsed_seconds
@@ -107,22 +107,37 @@ class ADSGenerator:
                 self._agg_driver.get_vehicle().apply_control(carla.VehicleControl(throttle=0, brake=0, steer=0))
                 break   
         
-        if self._speed_profile is None:
-            self._agg_driver.set_agent_options({'follow_speed_limits' : True})            
+        print("Initialization cycle completed!")
 
             
         
-    async def sim(self, filename, duration, speed_profile = None, speed_profile_dt = 0.1, stop_at_end = True):
+    async def sim(self, filename, max_duration, speed_profile = None, speed_profile_dt = 0.1, stop_at_end_pos = True):
+        """Starts the simulation by running concurrently the main simulation loop and an async printer that saves the data to a csv file.
+
+        Parameters
+        ----------
+            filename : str
+                Path of the csv file where the data will be saved.
+            max_duration : float
+                Maximum duration of the simulation [sec]. If the stop_at_end parameter is set to True, the simulation will stop when the vehicle
+                 reaches the end of the route or when this maximum duration is reached.
+            speed_profile : list of float, optional 
+                Profile of speed. Defaults to None.
+            speed_profile_dt (float, optional): _description_. Defaults to 0.1.
+            stop_at_end (bool, optional): _description_. Defaults to True.
+        """
+        
+        if max_duration <= 0:
+            raise ValueError("The maximum duration must be positive!")
+        
         self._speed_profile = speed_profile
         self._speed_profile_dt = speed_profile_dt
-        self._duration = duration
-        self._stop_at_end = stop_at_end
+        self._max_duration = max_duration
+        self._stop_at_end = stop_at_end_pos
 
         self._agg_driver.reset()
         # Perform init cycle
         self._init_cycle()
-        # Reset aggressive driver
-        self._agg_driver.reset()
         # Initialize the arrays that will contain the data
         self._time_array.clear()
         self._imu_array.clear()
@@ -130,10 +145,7 @@ class ADSGenerator:
         self._target_velocity_array.clear()
         self._throttle_array.clear()
         self._brake_array.clear()
-    
-        
-        self._sim_finished = False   
-        
+            
         main_task = asyncio.create_task(self._main_loop())
         save_task = asyncio.create_task(self._save_to_csv(main_task, filename))
         done, pending = await asyncio.wait([main_task, save_task], return_when=asyncio.ALL_COMPLETED)    
@@ -148,10 +160,7 @@ class ADSGenerator:
         self._velocity_array.clear()
         self._target_velocity_array.clear()
         self._throttle_array.clear()
-        self._brake_array.clear()
-        
-        # Reset the aggressive driver (position and IMU)
-        self._agg_driver.reset()     
+        self._brake_array.clear()   
         
         # Make the IMU start listening  
         self._agg_driver.get_imu().listen(lambda imu_data: self._imu_array.append({'AccX'  : imu_data.accelerometer.x,
@@ -165,12 +174,15 @@ class ADSGenerator:
         # If no speed profile is provided, the agent will follow the speed limits
         if self._speed_profile is None:
             self._agg_driver.set_agent_options(opt_dict={'follow_speed_limits': True})
+        else:
+            self._agg_driver.set_agent_options(opt_dict={'follow_speed_limits': False})
         
         t0 = self._world.get_snapshot().timestamp.elapsed_seconds
         t1 = t0
 
         # Run the simulation
         while True:
+            # Retrieve time information from the simulation
             t = self._world.get_snapshot().timestamp.elapsed_seconds
             # Compute target velocity
             if self._speed_profile is not None:
@@ -191,7 +203,7 @@ class ADSGenerator:
             if self._speed_profile is not None:
                 self._agg_driver.set_target_speed(target_velocity)    # an else branch is not needed because the agent will follow the speed limits 
             
-            # Update the control that will be applied (only every 1 / F_CTRL_UPDATE sec)        
+            # Update the control that will be applied (longitudinal control is updated only every 1 / F_CTRL_UPDATE sec)        
             if t - t1 >= 1 / F_CTRL_UPDATE:
                 t1 = t
                 control = self._agg_driver.run_step()
@@ -203,15 +215,14 @@ class ADSGenerator:
             # Go ahead with simulation
             self._world.tick()
 
-            # Check if time is over or if the vehicle has reached the end location while stop_at_end is True
-            if self._time_array[-1] >= self._duration or (self._stop_at_end and self._agg_driver.get_vehicle().get_location().distance(self._agg_driver.get_end_location()) < 0.1):
+            # Check if time is over or if the vehicle has reached the end location
+            if self._time_array[-1] >= self._max_duration or (self._stop_at_end and self._agg_driver.get_vehicle().get_location().distance(self._agg_driver.get_end_location()) < 0.5):
                 break
             
             # Yield control
             await asyncio.sleep(0)
             
-        print("Main loop completed!")
-        self._sim_finished = True
+        print("Main loop completed!")            
             
             
     async def _save_to_csv(self, main_task, filename):
