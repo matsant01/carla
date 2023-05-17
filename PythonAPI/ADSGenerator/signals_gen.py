@@ -27,19 +27,17 @@ class ADSGenerator:
             `world` : carla.World
                 The world object representing the simulation. NOTE that the world must be in synchronous mode 
                  and have the same dt as the one specified in the constructor.
+            `vehicle` : carla.Vehicle
+                The vehicle object representing the vehicle that will be controlled by the agent. This vehicle must be already spawned in the world.
+                 Note that the whole system has been designed to work with single-speed trasminssion vehicles, such as the Tesla Model 3
             `waypoints` : list of carla.Waypoint
                 List of waypoints that will be used to create the route that the vehicle will follow.
             `target_aggIn` : int, optional
-                Target aggressivity index (between 70 and 160). Defaults to 107.
-            `vehicle_bp_ID` : str, optional
-                String that identifies the blueprint of the vehicle to be used. NOTE that the system has been thought for
-                 single-speed transmission. Defaults to 'vehicle.tesla.model3'.
+                Target aggressivity index (between 70 and 160). Defaults to 107 (moderate).
             `dt` : float, optional
                 Delta time of the simulation. Defaults (and highly recommended) to 0.005 [sec].
-            `f_long_update` : float, optional
-                Frequency of longitudinal control update. Defaults (and highly recommended) to 10 [Hz].
             `opt_dict` : dict, optional 
-                Contains some possible options for the agent. Defaults is empty.
+                Contains some possible options for the agent ('ignore_traffic_lights', 'ignore_stop_signs' and 'ignore_vehicles'). Defaults is empty.
 
         ----------
         ### Raises
@@ -241,7 +239,7 @@ class ADSGenerator:
             t = self._world.get_snapshot().timestamp.elapsed_seconds
             # Compute target velocity
             if self._speed_profile is not None:
-                target_velocity = self._speed_profile[int(t / self._speed_profile_dt)]
+                target_velocity = self._speed_profile[int((t - t0)/ self._speed_profile_dt)]
             else:
                 target_velocity = self._agg_driver.get_vehicle().get_speed_limit()
             
