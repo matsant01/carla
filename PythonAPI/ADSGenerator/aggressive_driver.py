@@ -23,51 +23,51 @@ class AggressiveDriver:
     """
     
     def __init__(self, world, vehicle, waypoints, target_aggIn = 107, opt_dict = {}):  
-        """FIXME: Constructor method. It spawns the vehicle, creates the route and the agent.
+        """Constructor method used to spawn the vehicle, create the route from the list of waypoints,
+        create the agent and link it to the computed route.
 
-        Parameters
-        ----------
-            world : carla.World
+        --------------
+        ### Parameters
+            `world` : carla.World
                 The world object representing the simulation. NOTE that the world must be in synchronous mode 
                  and have the same dt as the one specified in the constructor.
-            waypoints : list of carla.Waypoint
+            `waypoints` : list of carla.Waypoint
                 List of waypoints that will be used to create the route that the vehicle will follow.
-            target_aggIn : int, optional
+            `target_aggIn` : int, optional
                 Target aggressivity index (between 70 and 160). Defaults to 107.
-            vehicle_bp_ID : str, optional
+            `vehicle_bp_ID` : str, optional
                 String that identifies the blueprint of the vehicle to be used. NOTE that the system has been thought for
                  single-speed transmission. Defaults to 'vehicle.tesla.model3'.
-            dt : float, optional
+            `dt` : float, optional
                 Delta time of the simulation. Defaults (and highly recommended) to 0.005 [sec].
-            f_long_update : float, optional
+            `f_long_update` : float, optional
                 Frequency of longitudinal control update. Defaults (and highly recommended) to 10 [Hz].
-            opt_dict : dict, optional 
+            `opt_dict` : dict, optional 
                 Contains some possible options for the agent. Defaults is empty.
 
-        Raises
-        ------
-            ValueError 
+        ----------
+        ### Raises
+            `ValueError` 
                 If the world's settings are incorrect or if the target aggressiveness index is out of range.
 
         """        
-        self._world = world
         
         # check the vehicle, then teleport it to the first waypoint
         if vehicle is None:
             raise ValueError("The vehicle has not be spawned!")
+        self._world = world
         self._vehicle = vehicle
         self._vehicle.set_location(waypoints[0].location)
            
         # create the route
         self._route = []
         self._start_location = waypoints[0].location
-        self._end_location = waypoints[-1].location
-
-        
-        waypoints.pop(0)    # removes the first waypoint, which is the spawn point
+        self._end_location = waypoints[-1].location      
+        self._waypoints = waypoints  
+        self._waypoints.pop(0)    # removes the first waypoint, which is the spawn point
         grp = GlobalRoutePlanner(world.get_map(), 2.0)
-        for i in range(len(waypoints) - 1):
-            partial_route = grp.trace_route(waypoints[i].location, waypoints[i+1].location)
+        for i in range(len(self._waypoints) - 1):
+            partial_route = grp.trace_route(self._waypoints[i].location, self._waypoints[i+1].location)
             partial_route.pop(0)    # prevents first element of every partial route to be added twice, resulting in unexpected
                                     # decelerations of the vehicle when it gets to the chosen spawn points
             for x in partial_route:
@@ -95,7 +95,7 @@ class AggressiveDriver:
             self._agent.ignore_vehicles(active = opt_dict['ignore_vehicles'])
         if 'follow_speed_limits' in opt_dict:
             self._agent.follow_speed_limits(value = opt_dict['follow_speed_limits'])
-        # attach IMU sensor to the vehicle   
+        # attach IMU sensor to the vehicle (NOTE that the IMU still has to be activated by specifying its callback function)   
         imu_location = carla.Location(0,0,0)
         imu_rotation = carla.Rotation(0,0,0)
         imu_transform = carla.Transform(imu_location, imu_rotation)
@@ -193,16 +193,16 @@ class AggressiveDriver:
         while considering the KI value to be 0.01. The equation has been obtained by fitting a polynomial of degree 3 to the data obtained
         from the simulation of the PID controller.
 
-        Parameters
-        ----------
-            KP : float
+        --------------
+        ### Parameters
+            `KP` : float
                 Proporcional term of the PID controller.
-            KD : float
+            `KD` : float
                 Derivative term of the PID controller.
 
-        Returns
-        -------
-            out : float
+        -----------
+        ### Returns
+            `out` : float
                 Approximation of the aggressiveness index of the PID controller if it would be used to follow FTP-75 driving cycle.
         """
         args = OPT_PARAMETERS
@@ -218,19 +218,19 @@ class AggressiveDriver:
         The solutions are filtered to keep only the real ones, that are in the range and that are not too close to the ones already in the list.
         The number of elements in the list can be smaller than k to speed up the process when the loop keeps finding the too similar solutions.
 
-        Parameters
-        ----------
-            k : int, optional
+        --------------
+        ### Parameters
+            `k` : int, optional
                 The maximum number of solutions to return. Defaults to 10.
 
-        Returns
-        -------
-            out: list
+        -----------
+        ### Returns
+            `out` : list
                 List of at most k possible PID controllers that satisfy the target aggressiveness index.
 
-        Raises
-        -------
-            ValueError
+        ----------
+        ### Raises
+            `ValueError`
                 When aggressiveness index is out of range (must be between 0 and 1).
         """
         MAX_ITER = 300
@@ -266,16 +266,12 @@ class AggressiveDriver:
 
     def _bestPID(self):
         """Given a target aggressiveness index, it returns the best PID controller that satisfies it.
-        To do so it computers a list of possible PIDs calling the `possible_PIDs()` function and then it finds the one that has a KP parameter
-        closest to the center of the range shifted according to relative aggIn of possible PIDs.
+        To do so it computes a list of possible PIDs calling the `possible_PIDs()` function and then it finds the one that has a KP parameter
+        closest to the center of the range, shifted according to normalized aggIn.
 
-        Raises
-        -------
-            ValueError: aggressiveness index out of range.
-
-        Returns
-        -------
-            out : dict
+        -----------
+        ### Returns
+            `out` : dict
                 A dictionary containing the KP, KI, KD parameters of the best PID controller that satisfies the 
                 target aggressiveness index
         """

@@ -22,28 +22,28 @@ class ADSGenerator:
     def __init__(self, world, vehicle, waypoints, target_aggIn = 107, dt = 0.005, opt_dict = {}):  
         """Constructor method.
 
-        Parameters
-        ----------
-            world : carla.World
+        --------------
+        ### Parameters
+            `world` : carla.World
                 The world object representing the simulation. NOTE that the world must be in synchronous mode 
                  and have the same dt as the one specified in the constructor.
-            waypoints : list of carla.Waypoint
+            `waypoints` : list of carla.Waypoint
                 List of waypoints that will be used to create the route that the vehicle will follow.
-            target_aggIn : int, optional
+            `target_aggIn` : int, optional
                 Target aggressivity index (between 70 and 160). Defaults to 107.
-            vehicle_bp_ID : str, optional
+            `vehicle_bp_ID` : str, optional
                 String that identifies the blueprint of the vehicle to be used. NOTE that the system has been thought for
                  single-speed transmission. Defaults to 'vehicle.tesla.model3'.
-            dt : float, optional
+            `dt` : float, optional
                 Delta time of the simulation. Defaults (and highly recommended) to 0.005 [sec].
-            f_long_update : float, optional
+            `f_long_update` : float, optional
                 Frequency of longitudinal control update. Defaults (and highly recommended) to 10 [Hz].
-            opt_dict : dict, optional 
+            `opt_dict` : dict, optional 
                 Contains some possible options for the agent. Defaults is empty.
 
-        Raises
-        ------
-            ValueError 
+        ----------
+        ### Raises
+            `ValueError`
                 If the world's settings are incorrect or if the target aggressiveness index is out of range.
 
         """
@@ -51,16 +51,21 @@ class ADSGenerator:
         # check if the world is consistent with the parameters
         settings = world.get_settings()
         if not settings.synchronous_mode:
-            raise ValueError("The world must be in synchronous mode!")
+            raise ValueError("ERROR: the world must be in synchronous mode!")
         if settings.fixed_delta_seconds != dt:
-            raise ValueError("The world must have the same dt as the one specified in the constructor!")
+            raise ValueError("ERROR: the world must have the same dt as the one specified in the constructor!")
+        if not settings.no_rendering_mode:
+            print("WARNING: you're running with redering ON! This may cause the simulation to run slower and data to be inconsistent!")
+        if dt != 0.005:
+            print("WARNING: the current time step is different from the recommended one (0.005 sec)!")
+            
         self._world = world
         self._dt = dt
         
         # check if the vehicle has been spawned correctly
         self._vehicle = vehicle
         if self._vehicle is None:
-            raise ValueError("The vehicle has not be spawned!")
+            raise ValueError("ERROR: the vehicle has not be spawned!")
         
         self._agg_driver = AggressiveDriver(self._world, self._vehicle, waypoints, target_aggIn, opt_dict)
         
@@ -71,19 +76,31 @@ class ADSGenerator:
         self._throttle_array = []
         self._brake_array = []
         
+        self._sim_performed = False
+
+        
         
     def _init_cycle(self):
-        # Start and then stop the vehicle
+        """This method is used to initialize the vehicle and the simulation. It is used to avoid the initial strange behavior
+        linked to simulation's bugs (mainly strange spikes in retrieved vehicle velocity when the sim begins).
+        This cycle is composed by two phases:
+        1. the vehicle accelerates to reach a target speed, then it aims to stop for 3 seconds;
+        2. the vehicle is brought back to its starting position and brakes are applied for 3 seconds;
+        """
+        # Start the vehicle and reach the target speed, then aim to stop for 3 seconds
         time_array = []
         target_velocity = 10
         duration = 10
         self._agg_driver.set_agent_options({'follow_speed_limits' : False})            
+
+        print("Starting initialization cycle...")
+
         
         t0 = self._world.get_snapshot().timestamp.elapsed_seconds
         while True:
             t = self._world.get_snapshot().timestamp.elapsed_seconds
             time_array.append(t - t0)
-            if time_array[-1] >= duration - 2.5:
+            if time_array[-1] >= duration - 3:
                 self._agg_driver.set_target_speed(0)
             else:
                 self._agg_driver.set_target_speed(target_velocity)
@@ -93,6 +110,7 @@ class ADSGenerator:
             if time_array[-1] >= duration:
                 break   
         
+        # Get back to the starting point
         self._agg_driver.reset()
         # Force the vehicle to brake for 3 seconds
         time_array = []
@@ -113,30 +131,75 @@ class ADSGenerator:
         
     async def sim(self, filename, max_duration, speed_profile = None, speed_profile_dt = 0.1, stop_at_end_pos = True):
         """Starts the simulation by running concurrently the main simulation loop and an async printer that saves the data to a csv file.
+        The simulation can be runned only once for each ADSGenerator object. To run a new simulation, create a new ADSGenerator object.
+        
+        NOTE that this is an async method, so it must be runned with the `await` keyword.
 
-        Parameters
-        ----------
-            filename : str
+        --------------
+        ### Parameters
+            `filename` : str
                 Path of the csv file where the data will be saved.
-            max_duration : float
+            `max_duration` : float
                 Maximum duration of the simulation [sec]. If the stop_at_end parameter is set to True, the simulation will stop when the vehicle
                  reaches the end of the route or when this maximum duration is reached.
-            speed_profile : list of float, optional 
-                Profile of speed. Defaults to None.
-            speed_profile_dt (float, optional): _description_. Defaults to 0.1.
-            stop_at_end (bool, optional): _description_. Defaults to True.
+            `speed_profile` : list of float, optional 
+                Profile of desired speeds that the vehicle will try to follow. Using a speed profile is the best way to see the differences on how 
+                 drivers with different level of aggressiveness behave. Defaults to None. If None, the vehicle will follow the speed limits.
+                 NOTE: that when using a speed profile highly recommended to set the max_duration equals to speed profile's duration.
+            `speed_profile_dt` : float, optional
+                Timestep for speed profile update. Defaults to 0.1.
+            `stop_at_end_pos` : bool, optional
+                If True the simuation will stop as soon as the vehicle gets close (less than 0.5 m) to the ending position. Defaults to True.
+                
+        ----------
+        ### Raises
+            `ValueError`
+                If parameters are not consistent or if the simulation has already been performed.
         """
+        # TODO: consider the possibility to use FTP-75 cycle as default.
         
         if max_duration <= 0:
-            raise ValueError("The maximum duration must be positive!")
+            raise ValueError("ERROR: the maximum duration must be positive!")
         
+        if self._sim_performed:
+            raise ValueError("ERROR: the simulation has already been performed! Create a new ADSGenerator object to perform a new simulation.")
+        
+        if speed_profile_dt <= 0:
+            raise ValueError("ERROR: the speed profile timestep must be positive!")
+        
+        if speed_profile is not None and speed_profile_dt == 0.1:
+            print("WARNING: the speed profile timestep is set to default 0.1 [sec]. If you want to use a different timestep, please specify it.")
+            
+        if not stop_at_end_pos:
+            print("WARNING: the simulation will not stop when the vehicle reaches the end of the route. If the max_duration is longer than")
+            print("         the time required to complete the path chosen, the vehicle's route could be uncertain. By default the vehicle")
+            print("         should try to keep its lane on the main route.")
+            print("NOTE: choosing a main street route, this could be useful for long simulation if you want the vehicle to keep running on the same path.")
+            
+        if os.path.exists(filename):
+            print("WARNING: the file {} already exists. Running the simulation will overwrite it.".format(filename))
+            response = input("Do you want to continue? (y/n): ")
+            if response.lower() != 'y':
+                print("Operation cancelled.")
+                return
+            print("Operation confirmed.")
+
+        # Save the parameters
         self._speed_profile = speed_profile
         self._speed_profile_dt = speed_profile_dt
         self._max_duration = max_duration
         self._stop_at_end = stop_at_end_pos
+        
+        # Make the IMU start listening  
+        self._agg_driver.get_imu().listen(lambda imu_data: self._imu_array.append({'AccX'  : imu_data.accelerometer.x,
+                                                                                   'AccY'  : imu_data.accelerometer.y,
+                                                                                   'AccZ'  : imu_data.accelerometer.z,
+                                                                                   'GyroX' : imu_data.gyroscope.x,
+                                                                                   'GyroY' : imu_data.gyroscope.y,
+                                                                                   'GyroZ' : imu_data.gyroscope.z   }))
 
+        # Reset position and perform init cycle
         self._agg_driver.reset()
-        # Perform init cycle
         self._init_cycle()
         # Initialize the arrays that will contain the data
         self._time_array.clear()
@@ -146,29 +209,21 @@ class ADSGenerator:
         self._throttle_array.clear()
         self._brake_array.clear()
             
+        print("Starting simulation...")
         main_task = asyncio.create_task(self._main_loop())
         save_task = asyncio.create_task(self._save_to_csv(main_task, filename))
         done, pending = await asyncio.wait([main_task, save_task], return_when=asyncio.ALL_COMPLETED)    
+        
+        self._sim_performed = True
         
         print("Simulation completed!")
     
         
     async def _main_loop(self): 
-        # Initialize the arrays that will contain the data
-        self._time_array.clear()
-        self._imu_array.clear()
-        self._velocity_array.clear()
-        self._target_velocity_array.clear()
-        self._throttle_array.clear()
-        self._brake_array.clear()   
-        
-        # Make the IMU start listening  
-        self._agg_driver.get_imu().listen(lambda imu_data: self._imu_array.append({'AccX'  : imu_data.accelerometer.x,
-                                                                                   'AccY'  : imu_data.accelerometer.y,
-                                                                                   'AccZ'  : imu_data.accelerometer.z,
-                                                                                   'GyroX' : imu_data.gyroscope.x,
-                                                                                   'GyroY' : imu_data.gyroscope.y,
-                                                                                   'GyroZ' : imu_data.gyroscope.z   }))
+        """This is the main loop of the simulation which contains the logic for speed following and control update. 
+        It is runned concurrently with the async printer that saves the data to a csv file.
+        """
+    
         # Initialize control
         control = carla.VehicleControl(throttle=0.0, brake=0.0, steer=0.0)         
         # If no speed profile is provided, the agent will follow the speed limits
@@ -226,6 +281,15 @@ class ADSGenerator:
             
             
     async def _save_to_csv(self, main_task, filename):
+        """This is the async printer that saves the data to a csv file. It is runned concurrently with the main loop.
+
+        --------------
+        ### Parameters
+            `main_task` : asyncio Task object
+                The main loop task, used to know when to stop this printer.
+            `filename` : str
+                The path of the csv file where data will be saved.
+        """
         with open(filename, mode='w') as file:
             writer = csv.writer(file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
             writer.writerow(['Time', 'Velocity', 'Target Velocity', 'Throttle', 'Brake', 'AccX', 'AccY', 'AccZ', 'GyroX', 'GyroY', 'GyroZ'])
